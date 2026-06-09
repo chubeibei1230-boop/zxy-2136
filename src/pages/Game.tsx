@@ -21,6 +21,7 @@ export default function Game() {
   const isInitialized = useGameStore((s) => s.isInitialized)
   const difficulty = useGameStore((s) => s.difficulty)
   const toggleGamePause = useGameStore((s) => s.toggleGamePause)
+  const setSettling = useGameStore((s) => s.setSettling)
   const setSpeed = useGameStore((s) => s.setSpeed)
   const speed = useGameStore((s) => s.speed)
   const currentTime = useGameStore((s) => s.currentTime)
@@ -65,10 +66,11 @@ export default function Game() {
 
   useEffect(() => {
     if (isGameOver) {
+      setSettling(true)
       const timer = setTimeout(handleGameOver, 1500)
       return () => clearTimeout(timer)
     }
-  }, [isGameOver, handleGameOver])
+  }, [isGameOver, handleGameOver, setSettling])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

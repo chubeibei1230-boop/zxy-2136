@@ -362,39 +362,144 @@ function extractKeyActions(
   result: GameResult,
   decisions: DecisionRecord[],
   events: GameResult['events'],
-  config: typeof DIFFICULTY_CONFIG.normal
+  _config: typeof DIFFICULTY_CONFIG.normal
 ): KeyAction[] {
   const actions: KeyAction[] = []
 
   for (const d of decisions) {
-    if (d.action === '安排接待') {
-      const match = d.detail.match(/^(.+?) → (.+)$/)
-      if (match) {
-        const groupName = match[1]
-        const isVipAction = groupName.includes('⭐') || groupName.includes('贵宾') || groupName.includes('VIP')
+    switch (d.action) {
+      case 'VIP优先接待':
         actions.push({
           time: d.time,
           type: 'assign',
-          label: isVipAction ? 'VIP优先接待' : '安排团队接待',
+          label: 'VIP优先接待',
           detail: d.detail,
-          impact: isVipAction ? 'positive' : 'neutral',
-          impactValue: isVipAction ? 15 : 5,
+          impact: 'positive',
+          impactValue: 25,
         })
+        break
+
+      case '安排接待':
+      case '插队安排接待': {
+        const isCut = d.action === '插队安排接待'
+        actions.push({
+          time: d.time,
+          type: 'assign',
+          label: isCut ? '插队安排接待' : '安排团队接待',
+          detail: d.detail,
+          impact: isCut ? 'positive' : 'neutral',
+          impactValue: isCut ? 12 : 5,
+        })
+        break
       }
-    } else if (d.action === '临时加场') {
-      actions.push({
-        time: d.time,
-        type: 'extra',
-        label: '临时加场',
-        detail: d.detail,
-        impact: 'positive',
-        impactValue: 15,
-      })
+
+      case '临时加场':
+        actions.push({
+          time: d.time,
+          type: 'extra',
+          label: '临时加场',
+          detail: d.detail,
+          impact: 'positive',
+          impactValue: 18,
+        })
+        break
+
+      case '提升优先级': {
+        const isVip = d.detail.includes('VIP优先')
+        const isHighRisk = d.detail.includes('高风险优先')
+        actions.push({
+          time: d.time,
+          type: 'reorder',
+          label: isVip ? 'VIP前移优先' : isHighRisk ? '高风险团队前移' : '提升团队优先级',
+          detail: d.detail,
+          impact: isVip || isHighRisk ? 'positive' : 'neutral',
+          impactValue: isVip ? 18 : isHighRisk ? 15 : 6,
+        })
+        break
+      }
+
+      case '降低优先级':
+        actions.push({
+          time: d.time,
+          type: 'reorder',
+          label: '降低团队优先级',
+          detail: d.detail,
+          impact: 'neutral',
+          impactValue: 3,
+        })
+        break
+
+      case '调整队列顺序': {
+        const isVip = d.detail.includes('【VIP】')
+        const isHighRisk = d.detail.includes('【高风险】')
+        const isPromote = d.detail.includes('提升')
+        actions.push({
+          time: d.time,
+          type: 'reorder',
+          label: isVip
+            ? 'VIP优先排序'
+            : isHighRisk
+              ? '高风险优先排序'
+              : isPromote
+                ? '提升排序位置'
+                : '推后排序位置',
+          detail: d.detail,
+          impact: isVip || isHighRisk ? 'positive' : 'neutral',
+          impactValue: isVip ? 20 : isHighRisk ? 16 : isPromote ? 7 : 2,
+        })
+        break
+      }
+
+      case '暂停接待点':
+        actions.push({
+          time: d.time,
+          type: 'pause',
+          label: '暂停接待点',
+          detail: d.detail,
+          impact: 'neutral',
+          impactValue: 0,
+        })
+        break
+
+      case '恢复接待点':
+        actions.push({
+          time: d.time,
+          type: 'resume',
+          label: '恢复接待点',
+          detail: d.detail,
+          impact: 'positive',
+          impactValue: 8,
+        })
+        break
+
+      case '提前结束维护':
+        actions.push({
+          time: d.time,
+          type: 'resume',
+          label: '提前结束维护',
+          detail: d.detail,
+          impact: 'positive',
+          impactValue: 14,
+        })
+        break
+
+      case '暂停/恢复接待点':
+        actions.push({
+          time: d.time,
+          type: 'pause',
+          label: '接待点状态切换',
+          detail: d.detail,
+          impact: 'neutral',
+          impactValue: 2,
+        })
+        break
+
+      default:
+        break
     }
   }
 
-  const complaintEvents = events.filter((e) => e.description.includes('投诉') || result.complaints > 0)
-  if (complaintEvents.length === 0 && result.complaints === 0) {
+  if (result.complaints === 0) {
     actions.push({
       time: result.events.length > 0 ? result.events[result.events.length - 1].triggerTime : 540,
       type: 'assign',
@@ -419,7 +524,7 @@ function extractKeyActions(
 
   return actions
     .sort((a, b) => b.impactValue - a.impactValue)
-    .slice(0, 8)
+    .slice(0, 10)
     .sort((a, b) => a.time - b.time)
 }
 

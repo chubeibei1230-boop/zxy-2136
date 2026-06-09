@@ -28,6 +28,7 @@ interface GameState {
   pressure: number
   isPaused: boolean
   isGameOver: boolean
+  isSettling: boolean
   speed: 1 | 2 | 3
   extraSlotsUsed: number
   maxExtraSlots: number
@@ -49,6 +50,7 @@ interface GameActions {
   toggleGamePause: () => void
   dismissNotification: (id: string) => void
   dismissStrategyTip: (id: string) => void
+  setSettling: (settling: boolean) => void
   getScore: () => number
 }
 
@@ -69,6 +71,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   pressure: 0,
   isPaused: false,
   isGameOver: false,
+  isSettling: false,
   speed: 1,
   extraSlotsUsed: 0,
   maxExtraSlots: 3,
@@ -108,6 +111,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       pressure: 0,
       isPaused: false,
       isGameOver: false,
+      isSettling: false,
       speed: 1,
       extraSlotsUsed: 0,
       maxExtraSlots: difficulty === 'hard' ? 2 : 3,
@@ -310,13 +314,24 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
   assignToReception: (groupId, pointId) => {
     const state = get()
-    if (!state.isInitialized) return
+    if (!state.isInitialized || state.isPaused || state.isGameOver || state.isSettling) return
     const group = state.queue.find((g) => g.id === groupId)
     const point = state.receptionPoints.find((p) => p.id === pointId)
     if (!group || !point || point.status !== 'idle') return
 
     const serviceTime = calculateServiceTime(group.size)
     const finishTime = state.currentTime + serviceTime
+    const queueIdx = state.queue.findIndex((g) => g.id === groupId)
+
+    let actionType = '安排接待'
+    let detailExtra = ''
+    if (group.isVip && queueIdx > 0) {
+      actionType = 'VIP优先接待'
+      detailExtra = `（跳过${queueIdx}组优先安排）`
+    } else if (queueIdx >= 3) {
+      actionType = '插队安排接待'
+      detailExtra = `（从第${queueIdx + 1}位提前）`
+    }
 
     set({
       queue: state.queue.filter((g) => g.id !== groupId),
@@ -329,8 +344,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         ...state.decisions,
         {
           time: state.currentTime,
-          action: '安排接待',
-          detail: `${group.name} → ${point.name}`,
+          action: actionType,
+          detail: `${group.name} → ${point.name}${detailExtra}`,
         },
       ],
     })
@@ -338,23 +353,51 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
   moveInQueue: (groupId, direction) => {
     const state = get()
+    if (!state.isInitialized || state.isPaused || state.isGameOver || state.isSettling) return
     const idx = state.queue.findIndex((g) => g.id === groupId)
     if (idx === -1) return
 
     const newQueue = [...state.queue]
+    const group = state.queue[idx]
+    let moved = false
+    let detail = ''
+
     if (direction === 'up' && idx > 0) {
+      const otherGroup = newQueue[idx - 1]
       ;[newQueue[idx - 1], newQueue[idx]] = [newQueue[idx], newQueue[idx - 1]]
+      moved = true
+      if (group.isVip) {
+        detail = `${group.name} 前移（VIP优先），超越 ${otherGroup.name}`
+      } else if ((state.currentTime - group.arrivalTime) / group.patience > 0.6) {
+        detail = `${group.name} 前移（高风险优先），超越 ${otherGroup.name}`
+      } else {
+        detail = `${group.name} 前移一位，超越 ${otherGroup.name}`
+      }
     } else if (direction === 'down' && idx < newQueue.length - 1) {
+      const otherGroup = newQueue[idx + 1]
       ;[newQueue[idx + 1], newQueue[idx]] = [newQueue[idx], newQueue[idx + 1]]
+      moved = true
+      detail = `${group.name} 后移一位，让位于 ${otherGroup.name}`
     }
+
+    if (!moved) return
 
     set({
       queue: newQueue,
+      decisions: [
+        ...state.decisions,
+        {
+          time: state.currentTime,
+          action: direction === 'up' ? '提升优先级' : '降低优先级',
+          detail,
+        },
+      ],
     })
   },
 
   reorderQueue: (sourceIndex, targetIndex) => {
     const state = get()
+    if (!state.isInitialized || state.isPaused || state.isGameOver || state.isSettling) return
     if (
       sourceIndex < 0 ||
       sourceIndex >= state.queue.length ||
@@ -366,17 +409,34 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const newQueue = [...state.queue]
     const [item] = newQueue.splice(sourceIndex, 1)
     newQueue.splice(targetIndex, 0, item)
-    set({ queue: newQueue })
+
+    const direction = targetIndex < sourceIndex ? '提升' : '降低'
+    const distance = Math.abs(targetIndex - sourceIndex)
+    const priorityTag = item.isVip ? '【VIP】' : (state.currentTime - item.arrivalTime) / item.patience > 0.6 ? '【高风险】' : ''
+
+    set({
+      queue: newQueue,
+      decisions: [
+        ...state.decisions,
+        {
+          time: state.currentTime,
+          action: '调整队列顺序',
+          detail: `${priorityTag}${item.name} ${direction}${distance}位（第${sourceIndex + 1}→第${targetIndex + 1}）`,
+        },
+      ],
+    })
   },
 
   addExtraSlot: () => {
     const state = get()
+    if (!state.isInitialized || state.isPaused || state.isGameOver || state.isSettling) return
     if (state.extraSlotsUsed >= state.maxExtraSlots) return
 
     const idx = state.receptionPoints.length
+    const existingTemps = state.receptionPoints.filter((p) => p.isTemporary).length
     const newPoint: ReceptionPoint = {
       id: `rp_temp_${idx}`,
-      name: `临时展厅${idx + 1}`,
+      name: `临时展厅${existingTemps + 1}`,
       status: 'idle',
       currentGroup: null,
       finishTime: null,
@@ -394,7 +454,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         {
           time: state.currentTime,
           action: '临时加场',
-          detail: `开启 ${newPoint.name}（60分钟限时）`,
+          detail: `开启 ${newPoint.name}（60分钟限时，队列${state.queue.length}组）`,
         },
       ],
     })
@@ -402,23 +462,32 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
   togglePause: (pointId) => {
     const state = get()
+    if (!state.isInitialized || state.isPaused || state.isGameOver || state.isSettling) return
+    const targetPoint = state.receptionPoints.find((p) => p.id === pointId)
+    if (!targetPoint) return
+
+    let actionType = ''
+    let newStatus: typeof targetPoint.status | null = null
+    if (targetPoint.status === 'idle') {
+      actionType = '暂停接待点'
+      newStatus = 'paused'
+    } else if (targetPoint.status === 'paused') {
+      actionType = '恢复接待点'
+      newStatus = 'idle'
+    } else {
+      return
+    }
+
     set({
-      receptionPoints: state.receptionPoints.map((p) => {
-        if (p.id !== pointId) return p
-        if (p.status === 'idle') {
-          return { ...p, status: 'paused' as const }
-        }
-        if (p.status === 'paused') {
-          return { ...p, status: 'idle' as const }
-        }
-        return p
-      }),
+      receptionPoints: state.receptionPoints.map((p) =>
+        p.id === pointId ? { ...p, status: newStatus as 'idle' | 'paused' } : p
+      ),
       decisions: [
         ...state.decisions,
         {
           time: state.currentTime,
-          action: '暂停/恢复接待点',
-          detail: pointId,
+          action: actionType,
+          detail: `${targetPoint.name}（${actionType === '暂停接待点' ? '进入待命' : '恢复可用'}）`,
         },
       ],
     })
@@ -426,16 +495,29 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
   resumePoint: (pointId) => {
     const state = get()
+    if (!state.isInitialized || state.isPaused || state.isGameOver || state.isSettling) return
+    const targetPoint = state.receptionPoints.find((p) => p.id === pointId)
+    if (!targetPoint) return
     set({
       receptionPoints: state.receptionPoints.map((p) =>
         p.id === pointId ? { ...p, status: 'idle' as const, maintenanceUntil: null, pendingMaintenance: null } : p
       ),
+      decisions: [
+        ...state.decisions,
+        {
+          time: state.currentTime,
+          action: '提前结束维护',
+          detail: `${targetPoint.name} 强制恢复接待`,
+        },
+      ],
     })
   },
 
   setSpeed: (speed) => set({ speed }),
 
   toggleGamePause: () => set((s) => ({ isPaused: !s.isPaused })),
+
+  setSettling: (settling) => set({ isSettling: settling }),
 
   dismissNotification: (id) =>
     set((s) => ({
