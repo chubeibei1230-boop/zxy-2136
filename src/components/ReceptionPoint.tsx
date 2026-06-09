@@ -1,7 +1,7 @@
 import type { ReceptionPoint as RP } from '@/types/game'
 import { formatTime, calculateServiceTime } from '@/types/game'
 import { useGameStore } from '@/store/gameStore'
-import { DoorOpen, DoorClosed, Wrench, Pause, Clock, Timer } from 'lucide-react'
+import { DoorOpen, DoorClosed, Wrench, Pause, Clock, Timer, AlertCircle } from 'lucide-react'
 
 interface ReceptionPointProps {
   point: RP
@@ -100,6 +100,12 @@ export default function ReceptionPoint({ point, currentTime }: ReceptionPointPro
               完成 {formatTime(point.finishTime!)}
             </span>
           </div>
+          {point.pendingMaintenance !== null && (
+            <div className="flex items-center gap-1 text-[10px] text-amber-400 mt-1 bg-amber-500/10 rounded px-2 py-1">
+              <AlertCircle className="w-3 h-3" />
+              结束后维护 {point.pendingMaintenance} 分钟
+            </div>
+          )}
         </div>
       )}
 
@@ -113,7 +119,9 @@ export default function ReceptionPoint({ point, currentTime }: ReceptionPointPro
             <div
               className="h-full bg-amber-500 rounded-full"
               style={{
-                width: `${point.maintenanceUntil ? ((currentTime - (point.maintenanceUntil - (point.maintenanceUntil - currentTime))) / point.maintenanceUntil) * 100 : 0}%`,
+                width: point.maintenanceUntil
+                  ? Math.min(100, ((1020 - currentTime) / (point.maintenanceUntil - (point.maintenanceUntil - maintRemaining))) * 100)
+                  : 0,
               }}
             />
           </div>

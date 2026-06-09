@@ -12,6 +12,7 @@ import { generateEvents } from '@/utils/events'
 import { calculateScore } from '@/utils/scoring'
 
 interface GameState {
+  isInitialized: boolean
   currentTime: number
   difficulty: Difficulty
   queue: VisitorGroup[]
@@ -36,6 +37,7 @@ interface GameActions {
   tick: (deltaMinutes: number) => void
   assignToReception: (groupId: string, pointId: string) => void
   moveInQueue: (groupId: string, direction: 'up' | 'down') => void
+  reorderQueue: (sourceIndex: number, targetIndex: number) => void
   addExtraSlot: () => void
   togglePause: (pointId: string) => void
   resumePoint: (pointId: string) => void
@@ -48,6 +50,7 @@ interface GameActions {
 let notifCounter = 0
 
 export const useGameStore = create<GameState & GameActions>((set, get) => ({
+  isInitialized: false,
   currentTime: GAME_START,
   difficulty: 'normal',
   queue: [],
@@ -79,10 +82,12 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         maintenanceUntil: null,
         isTemporary: false,
         temporaryUntil: null,
+        pendingMaintenance: null,
       })
     )
 
     set({
+      isInitialized: true,
       currentTime: GAME_START,
       difficulty,
       queue: [],
@@ -105,7 +110,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
   tick: (deltaMinutes) => {
     const state = get()
-    if (state.isPaused || state.isGameOver) return
+    if (!state.isInitialized || state.isPaused || state.isGameOver) return
 
     const newTime = state.currentTime + deltaMinutes
     if (newTime >= GAME_END) {
@@ -152,32 +157,25 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
           })
           break
         }
-        case 'guide_break': {
-          const { pointIndex, duration } = event.data as { pointIndex: number; duration: number }
-          const point = newPoints[pointIndex]
-          if (point && point.status === 'idle') {
-            point.status = 'maintenance'
-            point.maintenanceUntil = event.triggerTime + duration
-          }
-          newNotifications.push({
-            id: `notif_${++notifCounter}`,
-            message: event.description,
-            type: 'warning',
-            timestamp: event.triggerTime,
-          })
-          break
-        }
+        case 'guide_break':
         case 'maintenance': {
           const { pointIndex, duration } = event.data as { pointIndex: number; duration: number }
           const point = newPoints[pointIndex]
-          if (point && point.status === 'idle') {
-            point.status = 'maintenance'
-            point.maintenanceUntil = event.triggerTime + duration
+          if (point) {
+            if (point.status === 'idle') {
+              point.status = 'maintenance'
+              point.maintenanceUntil = event.triggerTime + duration
+            } else if (point.status === 'busy' && point.finishTime !== null) {
+              point.pendingMaintenance = duration
+            } else if (point.status === 'paused') {
+              point.status = 'maintenance'
+              point.maintenanceUntil = event.triggerTime + duration
+            }
           }
           newNotifications.push({
             id: `notif_${++notifCounter}`,
             message: event.description,
-            type: 'danger',
+            type: event.type === 'maintenance' ? 'danger' : 'warning',
             timestamp: event.triggerTime,
           })
           break
@@ -186,6 +184,32 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     }
 
     for (const point of newPoints) {
+      if (point.status === 'busy' && point.finishTime !== null && newTime >= point.finishTime) {
+        const group = point.currentGroup
+        if (group) {
+          const actualStart = point.finishTime - calculateServiceTime(group.size)
+          const waitTime = Math.max(0, actualStart - group.arrivalTime)
+          newTotalWait += Math.round(waitTime)
+          newServed++
+        }
+        point.currentGroup = null
+        point.finishTime = null
+
+        if (point.pendingMaintenance !== null) {
+          point.status = 'maintenance'
+          point.maintenanceUntil = newTime + point.pendingMaintenance
+          point.pendingMaintenance = null
+          newNotifications.push({
+            id: `notif_${++notifCounter}`,
+            message: `${point.name} 接待结束，进入维护状态`,
+            type: 'warning',
+            timestamp: newTime,
+          })
+        } else {
+          point.status = 'idle'
+        }
+      }
+
       if (point.status === 'maintenance' && point.maintenanceUntil !== null && newTime >= point.maintenanceUntil) {
         point.status = 'idle'
         point.maintenanceUntil = null
@@ -195,18 +219,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
           type: 'info',
           timestamp: newTime,
         })
-      }
-
-      if (point.status === 'busy' && point.finishTime !== null && newTime >= point.finishTime) {
-        const group = point.currentGroup
-        if (group) {
-          const waitTime = Math.max(0, (point.finishTime - group.size * 1.5) - group.arrivalTime)
-          newTotalWait += Math.round(waitTime)
-          newServed++
-        }
-        point.status = 'idle'
-        point.currentGroup = null
-        point.finishTime = null
       }
 
       if (point.isTemporary && point.temporaryUntil !== null && newTime >= point.temporaryUntil) {
@@ -263,6 +275,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
   assignToReception: (groupId, pointId) => {
     const state = get()
+    if (!state.isInitialized) return
     const group = state.queue.find((g) => g.id === groupId)
     const point = state.receptionPoints.find((p) => p.id === pointId)
     if (!group || !point || point.status !== 'idle') return
@@ -302,15 +315,23 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
     set({
       queue: newQueue,
-      decisions: [
-        ...state.decisions,
-        {
-          time: state.currentTime,
-          action: '调整优先级',
-          detail: `${groupId} ${direction === 'up' ? '上移' : '下移'}`,
-        },
-      ],
     })
+  },
+
+  reorderQueue: (sourceIndex, targetIndex) => {
+    const state = get()
+    if (
+      sourceIndex < 0 ||
+      sourceIndex >= state.queue.length ||
+      targetIndex < 0 ||
+      targetIndex >= state.queue.length ||
+      sourceIndex === targetIndex
+    ) return
+
+    const newQueue = [...state.queue]
+    const [item] = newQueue.splice(sourceIndex, 1)
+    newQueue.splice(targetIndex, 0, item)
+    set({ queue: newQueue })
   },
 
   addExtraSlot: () => {
@@ -327,6 +348,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       maintenanceUntil: null,
       isTemporary: true,
       temporaryUntil: state.currentTime + 60,
+      pendingMaintenance: null,
     }
 
     set({
@@ -371,7 +393,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const state = get()
     set({
       receptionPoints: state.receptionPoints.map((p) =>
-        p.id === pointId ? { ...p, status: 'idle' as const, maintenanceUntil: null } : p
+        p.id === pointId ? { ...p, status: 'idle' as const, maintenanceUntil: null, pendingMaintenance: null } : p
       ),
     })
   },

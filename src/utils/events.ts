@@ -63,6 +63,7 @@ export function generateEvents(difficulty: Difficulty): GameEvent[] {
   resetCounters()
   const events: GameEvent[] = []
   const isHard = difficulty === 'hard'
+  const pointCount = isHard ? 2 : 3
 
   const normalGroupCount = isHard ? 14 : 10
   const tourGroupCount = isHard ? 5 : 3
@@ -122,7 +123,7 @@ export function generateEvents(difficulty: Difficulty): GameEvent[] {
 
   for (let i = 0; i < guideBreakCount; i++) {
     const t = getUniqueTime()
-    const pointIndex = randomBetween(0, 2)
+    const pointIndex = randomBetween(0, pointCount - 1)
     const duration = randomBetween(20, 40)
     events.push({
       id: nextEventId(),
@@ -136,7 +137,7 @@ export function generateEvents(difficulty: Difficulty): GameEvent[] {
 
   for (let i = 0; i < maintenanceCount; i++) {
     const t = getUniqueTime()
-    const pointIndex = randomBetween(0, 2)
+    const pointIndex = randomBetween(0, pointCount - 1)
     const duration = randomBetween(30, 50)
     events.push({
       id: nextEventId(),

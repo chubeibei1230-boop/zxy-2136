@@ -25,6 +25,7 @@ export interface ReceptionPoint {
   maintenanceUntil: number | null
   isTemporary: boolean
   temporaryUntil: number | null
+  pendingMaintenance: number | null
 }
 
 export interface GameEvent {

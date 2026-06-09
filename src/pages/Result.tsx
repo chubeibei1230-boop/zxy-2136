@@ -4,12 +4,14 @@ import type { GameResult } from '@/types/game'
 import { formatTime } from '@/types/game'
 import { loadBestScore } from '@/utils/storage'
 import { getScoreRating } from '@/utils/scoring'
+import { useGameStore } from '@/store/gameStore'
 import { Trophy, Home, RotateCcw, Clock, MessageSquareWarning, Users, Star, ChevronRight, Crown } from 'lucide-react'
 
 export default function Result() {
   const location = useLocation()
   const navigate = useNavigate()
   const result = location.state?.result as GameResult | undefined
+  const initGame = useGameStore((s) => s.initGame)
   const [displayScore, setDisplayScore] = useState(0)
   const [showDetails, setShowDetails] = useState(false)
 
@@ -32,7 +34,7 @@ export default function Result() {
 
   if (!result) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
         <div className="text-center">
           <p className="text-slate-400 mb-4">未找到游戏记录</p>
           <button
@@ -47,7 +49,12 @@ export default function Result() {
   }
 
   const rating = getScoreRating(result.score)
-  const isNewBest = result.score >= bestScore && bestScore > 0
+  const isNewBest = result.score >= bestScore && result.score > 0
+
+  const handlePlayAgain = () => {
+    initGame(result.difficulty)
+    navigate('/game')
+  }
 
   return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
@@ -173,7 +180,7 @@ export default function Result() {
               返回首页
             </button>
             <button
-              onClick={() => navigate('/game')}
+              onClick={handlePlayAgain}
               className="flex-1 py-3 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-xl font-medium hover:bg-amber-500/30 transition-colors flex items-center justify-center gap-2"
             >
               <RotateCcw className="w-4 h-4" />
