@@ -6,10 +6,12 @@ import type {
   Notification,
   Difficulty,
   DecisionRecord,
+  StrategyTip,
 } from '@/types/game'
 import { GAME_START, GAME_END, RECEPTION_POINT_NAMES, calculateServiceTime } from '@/types/game'
 import { generateEvents } from '@/utils/events'
 import { calculateScore } from '@/utils/scoring'
+import { getRealTimeMetrics, generateStrategyTips } from '@/utils/strategy'
 
 interface GameState {
   isInitialized: boolean
@@ -30,6 +32,8 @@ interface GameState {
   extraSlotsUsed: number
   maxExtraSlots: number
   decisions: DecisionRecord[]
+  strategyTips: StrategyTip[]
+  lastTipUpdate: number
 }
 
 interface GameActions {
@@ -44,6 +48,7 @@ interface GameActions {
   setSpeed: (speed: 1 | 2 | 3) => void
   toggleGamePause: () => void
   dismissNotification: (id: string) => void
+  dismissStrategyTip: (id: string) => void
   getScore: () => number
 }
 
@@ -68,6 +73,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   extraSlotsUsed: 0,
   maxExtraSlots: 3,
   decisions: [],
+  strategyTips: [],
+  lastTipUpdate: 0,
 
   initGame: (difficulty) => {
     const events = generateEvents(difficulty)
@@ -105,6 +112,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       extraSlotsUsed: 0,
       maxExtraSlots: difficulty === 'hard' ? 2 : 3,
       decisions: [],
+      strategyTips: [],
+      lastTipUpdate: 0,
     })
   },
 
@@ -256,6 +265,30 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       : 0
     const pressure = Math.min(100, Math.round(totalPeople * 1.5 + avgWait * 0.5 + newComplaints * 5))
 
+    let newStrategyTips = state.strategyTips.filter((t) => !t.expiresAt || t.expiresAt > newTime)
+    if (newTime - state.lastTipUpdate >= 5) {
+      const metrics = getRealTimeMetrics(
+        filteredQueue,
+        newPoints,
+        newTime,
+        newComplaints,
+        newExtraUsed,
+        state.maxExtraSlots,
+        pressure
+      )
+      const freshTips = generateStrategyTips(filteredQueue, newPoints, newTime, metrics, state.difficulty)
+      const existingCategories = new Set(newStrategyTips.map((t) => `${t.category}-${t.title}`))
+      for (const tip of freshTips) {
+        const key = `${tip.category}-${tip.title}`
+        if (!existingCategories.has(key)) {
+          newStrategyTips.push(tip)
+        }
+      }
+      newStrategyTips = newStrategyTips
+        .sort((a, b) => b.priority - a.priority)
+        .slice(0, 6)
+    }
+
     set({
       currentTime: newTime,
       queue: filteredQueue,
@@ -270,6 +303,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       servedCount: newServed,
       pressure,
       extraSlotsUsed: newExtraUsed,
+      strategyTips: newStrategyTips,
+      lastTipUpdate: newTime - state.lastTipUpdate >= 5 ? newTime : state.lastTipUpdate,
     })
   },
 
@@ -405,6 +440,11 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   dismissNotification: (id) =>
     set((s) => ({
       notifications: s.notifications.filter((n) => n.id !== id),
+    })),
+
+  dismissStrategyTip: (id) =>
+    set((s) => ({
+      strategyTips: s.strategyTips.filter((t) => t.id !== id),
     })),
 
   getScore: () => {

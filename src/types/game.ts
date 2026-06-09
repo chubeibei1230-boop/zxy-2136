@@ -62,6 +62,82 @@ export interface DecisionRecord {
   detail: string
 }
 
+export type StrategyTipType = 'info' | 'warning' | 'danger' | 'success'
+
+export interface StrategyTip {
+  id: string
+  type: StrategyTipType
+  title: string
+  message: string
+  priority: number
+  timestamp: number
+  expiresAt?: number
+  category: 'vip' | 'wait' | 'queue' | 'maintenance' | 'extra' | 'idle' | 'general'
+}
+
+export interface LossPointItem {
+  category: string
+  label: string
+  points: number
+  maxPoints: number
+  detail: string
+}
+
+export interface KeyAction {
+  time: number
+  type: 'assign' | 'reorder' | 'extra' | 'pause' | 'resume'
+  label: string
+  detail: string
+  impact: 'positive' | 'negative' | 'neutral'
+  impactValue: number
+}
+
+export interface EfficiencyMetric {
+  label: string
+  value: number
+  unit?: string
+  benchmark: number
+  rating: 'excellent' | 'good' | 'average' | 'poor'
+  comment: string
+}
+
+export interface ImprovementSuggestion {
+  priority: 'high' | 'medium' | 'low'
+  title: string
+  description: string
+  action: string
+}
+
+export interface DispatchSummary {
+  totalScore: number
+  scoreBreakdown: {
+    served: { label: string; points: number; detail: string }
+    waitBonus: { label: string; points: number; detail: string }
+    penalties: { label: string; points: number; detail: string }
+    extra: { label: string; points: number; detail: string }
+  }
+  lossPoints: LossPointItem[]
+  keyActions: KeyAction[]
+  efficiencyMetrics: EfficiencyMetric[]
+  suggestions: ImprovementSuggestion[]
+  overallComment: string
+  dispatchStyle: string
+}
+
+export interface RealTimeMetrics {
+  avgWaitTime: number
+  maxWaitTime: number
+  vipWaitCount: number
+  idlePointCount: number
+  busyPointCount: number
+  maintenanceCount: number
+  queueSize: number
+  queuePeople: number
+  extraUsed: number
+  extraRemaining: number
+  pressure: number
+}
+
 export const GAME_START = 540
 export const GAME_END = 1020
 export const GAME_DURATION = GAME_END - GAME_START
